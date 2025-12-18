@@ -45,10 +45,19 @@ type Summary struct {
 	SlowRequestsCount int     // 请求时间 > 1s 的请求数
 	SlowRequestsRate  float64 // 请求时间 > 1s 的请求占比（百分比）
 
+	// LatencyBuckets 记录各时间段内的请求数量和占比
+	LatencyBuckets map[string]LatencyBucket
+
 	// TimeSeries 记录每个时间段的请求数量，key 是时间段索引（从0开始，每1秒一个时间段）
 	TimeSeries map[int]int
 
 	GeneratedAt time.Time
+}
+
+// LatencyBucket 记录某个延迟范围内的请求统计
+type LatencyBucket struct {
+	Count int     // 请求数量
+	Rate  float64 // 占比（百分比）
 }
 
 // GenerateHTMLFromSummary 根据 Summary 直接生成 HTML 报告。
@@ -303,6 +312,12 @@ h1 {
 	font-size: 13px;
 	color: #6b7280;
 }
+.raw-metrics {
+	margin-top: 12px;
+	font-size: 15px;
+	color: #9ca3af;
+	font-weight: 500;
+}
 </style>
 </head>
 <body>
@@ -328,11 +343,6 @@ h1 {
 		<div class="card-note">All requests (incl. errors)</div>
 	</div>
 	<div class="card">
-		<div class="card-label">RPS (thread avg)</div>
-		<div class="card-value">%.2f<span class="card-unit">req/s</span></div>
-		<div class="card-note">Success requests only</div>
-	</div>
-	<div class="card">
 		<div class="card-label">Total Requests (success)</div>
 		<div class="card-value">%d</div>
 		<div class="card-note">2XX/301/307 only</div>
@@ -347,23 +357,9 @@ h1 {
 		<div class="card-value">%d<span class="card-unit">(%.2f%%)</span></div>
 	</div>
 	<div class="card">
-		<div class="card-label">Slow Requests (>1s)</div>
-		<div class="card-value">%d<span class="card-unit">(%.2f%%)</span></div>
-		<div class="card-note">Of success requests</div>
-	</div>
-	<div class="card">
-		<div class="card-label">Avg Latency</div>
-		<div class="card-value">%s</div>
-		<div class="card-note">Success requests only</div>
-	</div>
-	<div class="card">
 		<div class="card-label">Avg Latency (all)</div>
 		<div class="card-value">%s</div>
 		<div class="card-note">All requests (incl. errors/timeouts)</div>
-	</div>
-	<div class="card">
-		<div class="card-label">Throughput (overall)</div>
-		<div class="card-value">%.2f<span class="card-unit">bytes/s</span></div>
 	</div>
 </div>
 
@@ -411,6 +407,24 @@ h1 {
 </div>
 </div>
 
+<div class="panel" style="margin-bottom: 24px;">
+	<h3>Latency Distribution by Time Range</h3>
+	<table>
+		<tr><th>Time Range</th><th>Count</th><th>Percentage</th></tr>
+		<tr><td>&le; 100ms</td><td>%d</td><td>%.2f%%</td></tr>
+		<tr><td>100ms - 200ms</td><td>%d</td><td>%.2f%%</td></tr>
+		<tr><td>200ms - 300ms</td><td>%d</td><td>%.2f%%</td></tr>
+		<tr><td>300ms - 500ms</td><td>%d</td><td>%.2f%%</td></tr>
+		<tr><td>500ms - 700ms</td><td>%d</td><td>%.2f%%</td></tr>
+		<tr><td>700ms - 1s</td><td>%d</td><td>%.2f%%</td></tr>
+		<tr><td>&gt; 1s</td><td>%d</td><td>%.2f%%</td></tr>
+	</table>
+	<div class="card-note" style="margin-top: 8px;">Success requests only</div>
+	<div class="raw-metrics">
+		Raw metrics: fastest=%s, slowest=%s, avg=%s, stddev=%s.
+	</div>
+</div>
+
 <div class="chart-card chart-card-wide">
 	<div class="chart-header">
 		<div>
@@ -421,10 +435,6 @@ h1 {
 	</div>
 	<canvas id="timeSeries" height="260"></canvas>
 	<div class="meta">Tip: hover over the line to see exact request counts at each time point.</div>
-</div>
-
-<div class="footer">
-Raw metrics: fastest=%s, slowest=%s, avg=%s, stddev=%s.
 </div>
 
 <script>
@@ -564,14 +574,10 @@ const timeSeriesChart = new Chart(ctxTimeSeries, {
 		s.GeneratedAt.Format("2006-01-02 15:04:05"),
 		s.OverallReqPerSec,
 		s.OverallReqPerSecAll,
-		s.ReqPerSec,
 		s.TotalRequests,
 		s.TotalRequestsAll,
 		s.TotalErrors, errorRate,
-		s.SlowRequestsCount, s.SlowRequestsRate,
-		stripMs(s.AvgLatency),
 		stripMs(s.AvgLatencyAll),
-		s.OverallBytesPerSec,
 		stripMs(s.Fastest),
 		stripMs(s.P10),
 		stripMs(s.P50),
@@ -582,6 +588,20 @@ const timeSeriesChart = new Chart(ctxTimeSeries, {
 		stripMs(s.Slowest),
 		stripMs(s.StdDev),
 		errList,
+		getBucketCount(s.LatencyBuckets, "100ms"),
+		getBucketRate(s.LatencyBuckets, "100ms"),
+		getBucketCount(s.LatencyBuckets, "200ms"),
+		getBucketRate(s.LatencyBuckets, "200ms"),
+		getBucketCount(s.LatencyBuckets, "300ms"),
+		getBucketRate(s.LatencyBuckets, "300ms"),
+		getBucketCount(s.LatencyBuckets, "500ms"),
+		getBucketRate(s.LatencyBuckets, "500ms"),
+		getBucketCount(s.LatencyBuckets, "700ms"),
+		getBucketRate(s.LatencyBuckets, "700ms"),
+		getBucketCount(s.LatencyBuckets, "1s"),
+		getBucketRate(s.LatencyBuckets, "1s"),
+		getBucketCount(s.LatencyBuckets, ">1s"),
+		getBucketRate(s.LatencyBuckets, ">1s"),
 		stripMs(s.Fastest), stripMs(s.Slowest), stripMs(s.AvgLatency), stripMs(s.StdDev),
 		toMsNum(s.P10),
 		toMsNum(s.P50),
@@ -685,4 +705,18 @@ func htmlEscape(s string) string {
 		"'", "&#39;",
 	)
 	return replacer.Replace(s)
+}
+
+func getBucketCount(buckets map[string]LatencyBucket, key string) int {
+	if bucket, ok := buckets[key]; ok {
+		return bucket.Count
+	}
+	return 0
+}
+
+func getBucketRate(buckets map[string]LatencyBucket, key string) float64 {
+	if bucket, ok := buckets[key]; ok {
+		return bucket.Rate
+	}
+	return 0.0
 }

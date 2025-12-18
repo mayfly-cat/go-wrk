@@ -273,6 +273,98 @@ func main() {
 			slowRequestsRate = float64(slowRequestsCount) / float64(totalRequestsAll) * 100.0
 		}
 
+		// 计算延迟分组统计（仅成功请求）
+		latencyBuckets := make(map[string]report.LatencyBucket)
+		totalSuccessRequests := aggStats.NumRequests
+		if totalSuccessRequests > 0 && aggStats.Histogram.TotalCount() > 0 {
+			// 定义时间阈值范围（微秒）
+			ranges := []struct {
+				label string
+				minUs int64
+				maxUs int64
+			}{
+				{"100ms", 0, 100 * 1000},
+				{"200ms", 100 * 1000, 200 * 1000},
+				{"300ms", 200 * 1000, 300 * 1000},
+				{"500ms", 300 * 1000, 500 * 1000},
+				{"700ms", 500 * 1000, 700 * 1000},
+				{"1s", 700 * 1000, 1000 * 1000},
+			}
+
+			// 初始化每个区间的计数
+			bucketCounts := make(map[string]int64)
+			for _, r := range ranges {
+				bucketCounts[r.label] = 0
+			}
+			bucketCounts[">1s"] = 0 // 初始化 >1s 的计数
+
+			// 遍历 histogram 的分布，累加每个区间的计数
+			bars := aggStats.Histogram.Distribution()
+			oneSecondUs := int64(1000 * 1000) // 1秒 = 1000000微秒
+			for _, bar := range bars {
+				// bar.From 和 bar.To 是区间的边界（微秒），bar.Count 是该区间的请求数
+				// 检查这个 bar 是否与我们的时间范围有交集
+				for _, r := range ranges {
+					// 如果 bar 与范围 r 有交集，累加计数
+					// 交集条件：bar.From < r.maxUs && bar.To > r.minUs
+					if bar.From < r.maxUs && bar.To > r.minUs {
+						// 计算交集部分的计数（简化处理：如果 bar 完全在范围内，使用全部计数；否则按比例）
+						intersectMin := bar.From
+						if intersectMin < r.minUs {
+							intersectMin = r.minUs
+						}
+						intersectMax := bar.To
+						if intersectMax > r.maxUs {
+							intersectMax = r.maxUs
+						}
+						// 按比例分配计数（简化：如果 bar 跨度很小，直接使用全部计数）
+						if bar.To-bar.From > 0 {
+							ratio := float64(intersectMax-intersectMin) / float64(bar.To-bar.From)
+							bucketCounts[r.label] += int64(float64(bar.Count) * ratio)
+						} else {
+							bucketCounts[r.label] += bar.Count
+						}
+					}
+				}
+				// 统计 >1s 的请求（bar.From >= 1s 的所有请求）
+				if bar.From >= oneSecondUs {
+					// 如果整个 bar 都在 >1s 范围内，使用全部计数
+					bucketCounts[">1s"] += bar.Count
+				} else if bar.To > oneSecondUs {
+					// 如果 bar 跨越 1s 边界，按比例分配 >1s 部分的计数
+					intersectMin := oneSecondUs
+					intersectMax := bar.To
+					if bar.To-bar.From > 0 {
+						ratio := float64(intersectMax-intersectMin) / float64(bar.To-bar.From)
+						bucketCounts[">1s"] += int64(float64(bar.Count) * ratio)
+					}
+				}
+			}
+
+			// 计算每个区间的占比
+			for _, r := range ranges {
+				bucketCount := int(bucketCounts[r.label])
+				rate := 0.0
+				if totalSuccessRequests > 0 {
+					rate = float64(bucketCount) / float64(totalSuccessRequests) * 100.0
+				}
+				latencyBuckets[r.label] = report.LatencyBucket{
+					Count: bucketCount,
+					Rate:  rate,
+				}
+			}
+			// 计算 >1s 的占比
+			bucketCount := int(bucketCounts[">1s"])
+			rate := 0.0
+			if totalSuccessRequests > 0 {
+				rate = float64(bucketCount) / float64(totalSuccessRequests) * 100.0
+			}
+			latencyBuckets[">1s"] = report.LatencyBucket{
+				Count: bucketCount,
+				Rate:  rate,
+			}
+		}
+
 		summary := report.Summary{
 			TestURL:     testUrl,
 			Concurrency: goroutines,
@@ -302,6 +394,7 @@ func main() {
 			StdDev:              toDuration(int64(aggStats.Histogram.StdDev())),
 			SlowRequestsCount:   slowRequestsCount,
 			SlowRequestsRate:    slowRequestsRate,
+			LatencyBuckets:      latencyBuckets,
 			TimeSeries:          aggStats.TimeSeries,
 			GeneratedAt:         time.Now(),
 		}

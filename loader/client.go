@@ -3,12 +3,12 @@ package loader
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"github.com/tsliwowicz/go-wrk/util"
 	"io/ioutil"
 	"net/http"
 
 	"fmt"
 
-	"github.com/tsliwowicz/g
 	"golang.org/x/net/http2"
 	"time"
 )
