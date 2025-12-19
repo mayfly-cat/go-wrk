@@ -92,7 +92,7 @@ func main() {
 
 	signal.Notify(sigChan, os.Interrupt)
 
-	flag.Parse() // Scan the arguments list
+	flag.Parse() // Scan the argument list
 	header = make(map[string]string)
 	for _, hdr := range headerFlags {
 		hp := strings.SplitN(hdr, ":", 2)
@@ -151,9 +151,10 @@ func main() {
 
 	responders := 0
 	aggStats := loader.RequesterStats{
-		ErrMap:     make(map[string]int),
-		Histogram:  histo.New(1, int64(duration*1000000), 4),
-		TimeSeries: make(map[int]int),
+		ErrMap:          make(map[string]int),
+		Histogram:       histo.New(1, int64(duration*1000000), 4),
+		TimeSeries:      make(map[int]int),
+		NetStatusCounts: make(map[string]int),
 	}
 
 	for responders < goroutines {
@@ -176,6 +177,9 @@ func main() {
 			responders++
 			for k, v := range stats.ErrMap {
 				aggStats.ErrMap[k] += v
+			}
+			for k, v := range stats.NetStatusCounts {
+				aggStats.NetStatusCounts[k] += v
 			}
 			aggStats.Histogram.Merge(stats.Histogram)
 			// 合并时间序列数据
@@ -395,6 +399,7 @@ func main() {
 			SlowRequestsCount:   slowRequestsCount,
 			SlowRequestsRate:    slowRequestsRate,
 			LatencyBuckets:      latencyBuckets,
+			NetStatusCounts:     aggStats.NetStatusCounts,
 			TimeSeries:          aggStats.TimeSeries,
 			GeneratedAt:         time.Now(),
 		}

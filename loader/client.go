@@ -4,8 +4,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"github.com/tsliwowicz/go-wrk/util"
-	"io/ioutil"
 	"net/http"
+	"os"
 
 	"fmt"
 
@@ -48,7 +48,7 @@ func client(disableCompression, disableKeepAlive, skipVerify bool, timeoutms int
 	}
 
 	// Load our CA certificate
-	clientCACert, err := ioutil.ReadFile(caCert)
+	clientCACert, err := os.ReadFile(caCert)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to open cert %v", err)
 	}
